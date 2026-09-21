@@ -16,11 +16,6 @@ export async function getSender(senderId: string): Promise<SenderRow | null> {
   return queryOne<SenderRow>(`SELECT * FROM senders WHERE id = $1`, [senderId]);
 }
 
-/**
- * Every user needs at least one sending identity. On first login we provision
- * Ethereal inboxes automatically so the reviewer can run the whole flow without
- * copy-pasting SMTP credentials. Falls back to the fixed ETHEREAL_* env creds.
- */
 export async function ensureSendersForUser(userId: string): Promise<SenderRow[]> {
   const existing = await listSenders(userId);
   if (existing.length > 0) return existing;
@@ -48,16 +43,7 @@ export async function ensureSendersForUser(userId: string): Promise<SenderRow[]>
       const row = await queryOne<SenderRow>(
         `INSERT INTO senders (user_id, label, from_email, smtp_host, smtp_port, smtp_user, smtp_pass, hourly_limit)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [
-          userId,
-          `Sender ${i + 1}`,
-          creds.from_email,
-          creds.smtp_host,
-          creds.smtp_port,
-          creds.smtp_user,
-          creds.smtp_pass,
-          env.limits.perSenderPerHour,
-        ]
+        [userId, `Sender ${i + 1}`, creds.from_email, creds.smtp_host, creds.smtp_port, creds.smtp_user, creds.smtp_pass, env.limits.perSenderPerHour]
       );
       if (row) created.push(row);
     } catch (err) {
@@ -79,11 +65,6 @@ export type PickResult =
   | { ok: false; reason: 'no_senders' }
   | { ok: false; reason: 'rate_limited'; retryAt: number; blockedBy: 'global' | 'sender'; sender: SenderRow };
 
-/**
- * Take an hourly slot, preferring the sender the email was assigned to. If that
- * sender is out of budget we try the user's other active senders before giving
- * up - that is the point of supporting multiple senders.
- */
 export async function acquireSendSlot(userId: string, preferredSenderId: string | null): Promise<PickResult> {
   const senders = await listSenders(userId);
   if (senders.length === 0) return { ok: false, reason: 'no_senders' };
@@ -94,20 +75,26 @@ export async function acquireSendSlot(userId: string, preferredSenderId: string 
     return 0;
   });
 
-  let last: ConsumeResult | null = null;
+  let lastResult: ConsumeResult | null = null;
+  let lastSender: SenderRow | null = null;
+
   for (const sender of ordered) {
     const result = await consumeSlot(sender.id, senderLimit(sender));
     if (result.allowed) return { ok: true, sender };
-    last = result;
-    if (result.reason === 'global') break; // no other sender can help
+    lastResult = result;
+    lastSender = sender;
+    if (!result.allowed && result.reason === 'global') break;
   }
 
-  const fallback = ordered[0];
+  const fallback = lastSender ?? ordered[0];
+  const retryAt = lastResult && !lastResult.allowed ? lastResult.retryAt : Date.now() + 60_000;
+  const blockedBy = lastResult && !lastResult.allowed ? lastResult.reason : 'sender';
+
   return {
     ok: false,
     reason: 'rate_limited',
-    retryAt: last && !last.allowed ? last.retryAt : Date.now() + 60_000,
-    blockedBy: last && !last.allowed ? last.reason : 'sender',
+    retryAt,
+    blockedBy,
     sender: fallback,
   };
 }
