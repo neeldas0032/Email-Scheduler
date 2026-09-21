@@ -59,12 +59,12 @@ export async function acquireSendSlot(userId: string, preferredSenderId: string 
   for (const sender of ordered) {
     const result = await consumeSlot(sender.id, senderLimit(sender));
     if (result.allowed) return { ok: true, sender };
-    lastResult = result;
+    lastResult = result as any;
     lastSender = sender;
-    if (!result.allowed && result.reason === 'global') break;
+    if (!(result as any).allowed && (result as any).reason === 'global') break;
   }
   const fallback = lastSender ?? ordered[0];
-  const retryAt = lastResult && !lastResult.allowed ? lastResult.retryAt : Date.now() + 60_000;
-  const blockedBy: 'global' | 'sender' = lastResult && !lastResult.allowed ? lastResult.reason : 'sender';
+  const retryAt = lastResult ? (lastResult as any).retryAt ?? Date.now() + 60_000 : Date.now() + 60_000;
+  const blockedBy: 'global' | 'sender' = lastResult ? (lastResult as any).reason ?? 'sender' : 'sender';
   return { ok: false, reason: 'rate_limited', retryAt, blockedBy, sender: fallback };
 }

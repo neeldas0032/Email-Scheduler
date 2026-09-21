@@ -21,7 +21,8 @@ async function processJob(job: Job<EmailJobData>, token?: string): Promise<strin
   );
   if (!email) { logger.info('worker', `skip ${emailId}`); return 'skipped'; }
 
-  const slot = await acquireSendSlot(email.user_id, email.sender_id);
+  const slotRaw = await acquireSendSlot(email.user_id, email.sender_id);
+  const slot = slotRaw as any;
 
   if (!slot.ok) {
     if (slot.reason === 'no_senders') {
