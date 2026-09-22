@@ -45,8 +45,8 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 export function cookieOptions() {
   return {
     httpOnly: true as const,
-    sameSite: 'lax' as const,
-    secure: env.isProd,
+    sameSite: 'none' as const,
+    secure: true,
     maxAge: 7 * 24 * 60 * 60 * 1000,
     path: '/',
   };
